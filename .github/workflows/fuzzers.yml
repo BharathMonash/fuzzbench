@@ -51,6 +51,8 @@ jobs:
           - aflplusplus_mopt
           - aflplusplus_mopt_both
           - aflplusplus_noextrasplice
+          - aflplusplus_nofavskip
+          - aflplusplus_introspection
           - afl_fast
           - afl_fast_v2
           - aflplusplus_fast_v1
@@ -59,6 +61,7 @@ jobs:
           - aflplusplus_fast_v2_time
           - aflplusplus_fast_branches_v2
           - aflplusplus_cmplog
+          - aflplusplus_dict2file
 
         benchmark_type:
           - oss-fuzz

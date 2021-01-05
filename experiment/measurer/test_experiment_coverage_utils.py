@@ -14,28 +14,31 @@
 """Tests for experiment_coverage_utils.py"""
 import os
 import pandas as pd
+import multiprocessing
 
 from experiment.measurer import experiment_coverage_utils
-
 TEST_DATA_PATH = os.path.join(os.path.dirname(__file__), 'test_data')
 
-# Arbitrary values to use in tests.
+# Expected Constants.
 SUMMARY_JSON_FILE = 'cov_summary.json'
+SUMMARY_JSON_FILES = ['cov_summary.json', 'cov_summary_1.json',
+                      'cov_summary_2.json', 'cov_summary_3.json',
+                      'cov_summary_4.json']
 NUM_FUNCTION_IN_COV_SUMMARY = 3
 NUM_COVERED_SEGMENTS_IN_COV_SUMMARY = 16
 FILE_NAME = "/home/test/fuzz_no_fuzzer.cc"
 FUNCTION_NAMES = ['main', '_Z3fooIfEvT_', '_Z3fooIiEvT_']
 
-# Arbitrary values for simple tests
 BENCHMARK = 'freetype2'
 FUZZER = 'afl'
 TRIAL_ID = 2
 TIMESTAMP = 900
 
-# Arbitrary values for testing experiment specific dataframe.
 BENCHMARKS = ['benchmark_1', 'benchmark_2']
 FUZZERS = ['fuzzer_1', 'fuzzer_2']
 TIMESTAMPS = [900, 1800]
+TRIAL_IDS = [1, 2, 3, 4, 5]
+
 
 
 def get_test_data_path(*subpaths):
@@ -163,151 +166,123 @@ def test_data_frame_container_remove_redundant_duplicates(fs):
     assert (df_length - df_length_after_drop) == 0
 
 
-def mock_measure_cycle_routine_and_collect_data(fs):
-    """Tests that extract_covered_regions_from_summary_json returns the covered
-    segments and functions from summary json file."""
-
-    summary_json_file = get_test_data_path(SUMMARY_JSON_FILE)
-    fs.add_real_file(summary_json_file, read_only=False)
-
-    experiment_specific_df_container = (
-        experiment_coverage_utils.DataFrameContainer())
-    mock_multi_processing_list = []
-
-    trial_id = 0
-
-    # Fill mock data for the experiment.
-    for benchmark in BENCHMARKS:
-        for fuzzer in FUZZERS:
-            trial_id += 1
-            for time_stamp in TIMESTAMPS:
-                mock_multi_processing_list.append(
-                    experiment_coverage_utils.
-                    extract_segments_and_functions_from_summary_json(
-                        summary_json_file, benchmark, fuzzer, trial_id,
-                        time_stamp))
-
-    experiment_specific_df_container.segment_df = pd.concat(
-        [df.segment_df for df in mock_multi_processing_list], ignore_index=True)
-    experiment_specific_df_container.function_df = pd.concat(
-        [df.function_df for df in mock_multi_processing_list],
-        ignore_index=True)
-    experiment_specific_df_container.name_df = pd.concat(
-        [df.name_df for df in mock_multi_processing_list], ignore_index=True)
-    experiment_specific_df_container.remove_redundant_duplicates()
-    return experiment_specific_df_container
-
-
-def test_data_frame_utilities_for_segment_df(fs):
-    """Test that the mock function populates the experiment specific data frame
-    with segment data properly and all the data frame utilities work
-    successfully. The test involves checking for integrity in the collected data
-    and the integrity of the utility functions."""
-
-    experiment_specific_df_container = (
-        mock_measure_cycle_routine_and_collect_data(fs))
-
-    fuzzer_ids = experiment_specific_df_container.segment_df['fuzzer'].unique()
-    benchmark_ids = experiment_specific_df_container.segment_df[
-        'benchmark'].unique()
-    file_ids = experiment_specific_df_container.segment_df['file'].unique()
-
-    assert len(experiment_specific_df_container.segment_df
-              ) == NUM_COVERED_SEGMENTS_IN_COV_SUMMARY * 4
-
-    for fuzzer_id in fuzzer_ids:
-        # Check if type recorded for the ID id is "fuzzer".
-        assert (experiment_specific_df_container.name_df[
-            experiment_specific_df_container.name_df['id'] == fuzzer_id]
-                ['type'].item() == "fuzzer")
-        # Check if fuzzer ids match in "segment" data frame and "name" data
-        # frame.
-        assert (fuzzer_id == experiment_specific_df_container.name_df[
-            experiment_specific_df_container.name_df['name'] == 'fuzzer_1']
-                ['id'].unique().item() or
-                fuzzer_id == experiment_specific_df_container.name_df[
-                    experiment_specific_df_container.name_df['name'] ==
-                    'fuzzer_2']['id'].unique().item())
-
-    for benchmark_id in benchmark_ids:
-        # Check if type recorded for the ID id is "benchmark".
-        assert (experiment_specific_df_container.name_df[
-            experiment_specific_df_container.name_df['id'] == benchmark_id]
-                ['type'].item() == "benchmark")
-        # Check if benchmark ids match in "segment" data frame and "name" data
-        # frame.
-        assert (benchmark_id == experiment_specific_df_container.name_df[
-            experiment_specific_df_container.name_df['name'] == 'benchmark_1']
-                ['id'].unique().item() or
-                benchmark_id == experiment_specific_df_container.name_df[
-                    experiment_specific_df_container.name_df['name'] ==
-                    'benchmark_2']['id'].unique().item())
-
-    for file_id in file_ids:
-        # check all file names in the dat frame are already known.
-        assert (experiment_specific_df_container.name_df[
-            experiment_specific_df_container.name_df['id'] == file_id]
-                ['type'].item() == "file")
-        # Check if file ids exactly match in "segment" data frame and "name"
-        # data frame.
-        assert (file_id == experiment_specific_df_container.name_df[
-            experiment_specific_df_container.name_df['name'] == FILE_NAME]
-                ['id'].item())
-
-
 def test_data_frame_utilities_for_function_df(fs):
-    """Test that the mock function populates the experiment specific data frame
-    with function data properly and all the data frame utilities work
-    successfully. The test involves checking for integrity in the collected data
-    and the integrity of the utility functions."""
+    """Tests that name_to_id ."""
+    json_files = []
+    for json_file in SUMMARY_JSON_FILES:
+        summary_json_file = get_test_data_path(json_file)
+        json_files.append(summary_json_file)
+        fs.add_real_file(summary_json_file, read_only=False)
 
     experiment_specific_df_container = (
-        mock_measure_cycle_routine_and_collect_data(fs))
+        mock_multiprocessing_for_recoding_coverage_data(json_files))
 
-    fuzzer_ids = experiment_specific_df_container.function_df['fuzzer'].unique()
+    fuzzer_ids = experiment_specific_df_container.function_df[
+        'fuzzer'].unique()
     benchmark_ids = experiment_specific_df_container.function_df[
         'benchmark'].unique()
     function_ids = experiment_specific_df_container.function_df[
         'function'].unique()
 
     assert len(experiment_specific_df_container.function_df
-              ) == NUM_FUNCTION_IN_COV_SUMMARY * 8
+               ) == NUM_FUNCTION_IN_COV_SUMMARY * 8
 
-    for fuzzer_id in fuzzer_ids:
-        # Check if type recorded for the ID id is "fuzzer".
-        assert (experiment_specific_df_container.name_df[
-            experiment_specific_df_container.name_df['id'] == fuzzer_id]
-                ['type'].item() == "fuzzer")
-        # Check if fuzzer ids match in "segment" data frame and "name" data
-        # frame.
-        assert (fuzzer_id == experiment_specific_df_container.name_df[
-            experiment_specific_df_container.name_df['name'] == 'fuzzer_1']
-                ['id'].unique().item() or
-                fuzzer_id == experiment_specific_df_container.name_df[
-                    experiment_specific_df_container.name_df['name'] ==
-                    'fuzzer_2']['id'].unique().item())
+    assert_integrity_for_fuzzer_ids(experiment_specific_df_container,
+                                    fuzzer_ids)
 
-    for benchmark_id in benchmark_ids:
-        # Check if type recorded for the ID id is "benchmark".
-        assert (experiment_specific_df_container.name_df[
-            experiment_specific_df_container.name_df['id'] == benchmark_id]
-                ['type'].item() == "benchmark")
-        # Check if benchmark ids match in "segment" data frame and "name" data
-        # frame.
-        assert (benchmark_id == experiment_specific_df_container.name_df[
-            experiment_specific_df_container.name_df['name'] == 'benchmark_1']
-                ['id'].unique().item() or
-                benchmark_id == experiment_specific_df_container.name_df[
-                    experiment_specific_df_container.name_df['name'] ==
-                    'benchmark_2']['id'].unique().item())
+    assert_integrity_for_benchmark_ids(experiment_specific_df_container,
+                                       benchmark_ids)
 
     for function_id in function_ids:
         # check all function names in the data frames are already known.
-        assert (set(experiment_specific_df_container.name_df[
-            experiment_specific_df_container.name_df['id'] == function_id]
-                    ['name'].unique()).issubset(FUNCTION_NAMES))
+        assert (set(
+            experiment_specific_df_container.name_df[
+                experiment_specific_df_container.name_df[
+                    'id'] == function_id]['name'].unique())
+                .issubset(FUNCTION_NAMES))
         # Check if function ids match in "function" data frame and "name" data
         # frame.
         assert (experiment_specific_df_container.name_df[
-            experiment_specific_df_container.name_df['id'] == function_id]
+                    experiment_specific_df_container.name_df[
+                        'id'] == function_id]
                 ['type'].item() == "function")
+
+
+def mock_multiprocessing_for_recoding_coverage_data(json_files):
+    experiment_specific_df_container = (
+        experiment_coverage_utils.DataFrameContainer())
+
+    def mock_record_segment_and_function_coverage(process_specific_containers,
+                                                  json_file, benchmark, fuzzer,
+                                                  trial_num, time_stamp):
+        process_specific_containers.append(
+            experiment_coverage_utils.
+            extract_segments_and_functions_from_summary_json(
+                json_file, benchmark, fuzzer, trial_num, time_stamp))
+
+    multiprocessing.set_start_method('spawn', force=True)
+
+    with multiprocessing.Pool() as pool, multiprocessing.Manager() as manager:
+        process_specific_df_containers = (
+            manager.list(  # pytype: disable=attribute-error
+                [experiment_specific_df_container]))
+
+        mock_record_segment_and_function_coverage_args = [
+            (process_specific_df_containers, json_file, BENCHMARKS[1],
+             FUZZERS[1], trial_id, TIMESTAMPS[1])
+            for trial_id, json_file in zip(TRIAL_IDS, json_files)
+        ]
+        result = pool.starmap_async(
+            mock_record_segment_and_function_coverage,
+            mock_record_segment_and_function_coverage_args)
+
+    if result.ready():
+        experiment_specific_df_container.segment_df = pd.concat(
+            [df.segment_df for df in process_specific_df_containers],
+            ignore_index=True)
+        experiment_specific_df_container.function_df = pd.concat(
+            [df.function_df for df in process_specific_df_containers],
+            ignore_index=True)
+        experiment_specific_df_container.name_df = pd.concat(
+            [df.name_df for df in process_specific_df_containers],
+            ignore_index=True)
+        experiment_specific_df_container.remove_redundant_duplicates()
+    return experiment_specific_df_container
+
+
+def assert_integrity_for_fuzzer_ids(experiment_specific_df_container,
+                                    fuzzer_ids):
+    for fuzzer_id in fuzzer_ids:
+        # Check if type recorded for the ID id is "fuzzer".
+        assert (experiment_specific_df_container.name_df[
+                    experiment_specific_df_container.name_df[
+                        'id'] == fuzzer_id]['type'].item() == "fuzzer")
+        # Check if fuzzer ids match in "segment" data frame and "name" data
+        # frame.
+        assert (fuzzer_id == experiment_specific_df_container.name_df[
+            experiment_specific_df_container.name_df['name'] == 'fuzzer_1'][
+            'id'].unique().item()
+                or
+                fuzzer_id == experiment_specific_df_container.name_df[
+                    experiment_specific_df_container.name_df[
+                        'name'] == 'fuzzer_2']['id'].unique().item())
+
+
+def assert_integrity_for_benchmark_ids(experiment_specific_df_container,
+                                       benchmark_ids):
+    for benchmark_id in benchmark_ids:
+        # Check if type recorded for the ID id is "benchmark".
+        assert (experiment_specific_df_container.name_df[
+                    experiment_specific_df_container.name_df[
+                        'id'] == benchmark_id]['type'].item() == "benchmark")
+        # Check if benchmark ids match in "segment" data frame and "name" data
+        # frame.
+        assert (benchmark_id == experiment_specific_df_container.name_df[
+            experiment_specific_df_container.name_df['name'] == 'benchmark_1'][
+            'id'].unique().item()
+                or
+                benchmark_id == experiment_specific_df_container.name_df[
+                    experiment_specific_df_container.name_df[
+                        'name'] == 'benchmark_2']['id'].unique().item()
+                )
+

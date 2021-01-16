@@ -17,12 +17,12 @@ jobs:
       fail-fast: false
       matrix:
         fuzzer:
-          - coverage
           - afl
           - aflcc
           - aflfast
           - aflplusplus
           - aflplusplus_optimal
+          - aflplusplus_eclipser
           - aflsmart
           - entropic
           - fairfuzz
@@ -44,10 +44,6 @@ jobs:
           - libfuzzer_magicbytes
           - entropic_magicbytes
           - aflplusplus_lightweizz
-          - aflplusplus_268c
-          - aflplusplus_268c_qemu
-          - aflplusplus_300c
-          - aflplusplus_300c_qemu
           - aflplusplus_introspection
           - afl_fast
           - afl_fast_v2
@@ -60,6 +56,15 @@ jobs:
           - aflplusplus_coe_v2
           - aflplusplus_cmplog
           - aflplusplus_dict2file
+          - aflplusplus_introspection2
+          - aflplusplus_schedule
+          - aflplusplus_schedule_explore
+          - aflplusplus_cmplog_variant
+          - aflplusplus_cmplog_variant2
+          - aflplusplus_cmplog_variant3
+          - aflplusplus_cmplog_new
+          - aflplusplus_notrim
+          - aflplusplus_cmplog_variant2_comb
 
         benchmark_type:
           - oss-fuzz

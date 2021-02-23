@@ -334,6 +334,8 @@ class SnapshotMeasurer(coverage_utils.TrialCoverage):  # pylint: disable=too-man
         self.coverage_dir = os.path.join(self.measurement_dir, 'coverage')
         self.trial_dir = os.path.join(self.work_dir, 'experiment-folders',
                                       self.benchmark_fuzzer_trial_dir)
+        self.segment_dir = os.path.join(self.coverage_dir, 'segments')
+        self.function_dir = os.path.join(self.coverage_dir, 'functions')
 
         # Used by the runner to signal that there won't be a corpus archive for
         # a cycle because the corpus hasn't changed since the last cycle.
@@ -553,9 +555,11 @@ class SnapshotMeasurer(coverage_utils.TrialCoverage):  # pylint: disable=too-man
         """Saves the measured-files StateFile for this cycle with files
         measured in this cycle and previous ones."""
         current_files = set(os.listdir(self.corpus_dir))
+        current_segment_files = set(os.listdir(self.segment_dir))
+        current_fucntion_files = set(os.listdir(self.segment_dir))
         previous_files = self.get_prev_measured_files(cycle)
-        all_files = current_files.union(previous_files)
-
+        all_files = current_files.union(previous_files, current_fucntion_files,
+                                        current_segment_files)
         measured_files_state = self.get_measured_files_state(cycle)
         measured_files_state.set_current(list(all_files))
 

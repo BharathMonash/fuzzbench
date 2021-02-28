@@ -1,4 +1,4 @@
-# Copyright 2020 Google LLC
+# Copyright 2021 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,10 +14,10 @@
 
 FROM gcr.io/fuzzbench/base-image
 
-# This makes interactive docker runs painless:
-ENV LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/out"
-ENV AFL_MAP_SIZE=2222222
-ENV PATH="$PATH:/out"
-ENV AFL_SKIP_CPUFREQ=1
-ENV AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES=1
-ENV AFL_TESTCACHE_SIZE=2
+RUN apt-get update && \
+    apt-get install wget -y && \
+    apt-get install python-pip -y && \
+    python --version && \
+    python -m pip install --upgrade pip==20.3 && \
+    python -m pip install tensorflow==1.8.0 && \
+    python -m pip install keras==2.2.3

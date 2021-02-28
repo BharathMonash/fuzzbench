@@ -25,9 +25,10 @@ from common import logs
 from common import filestore_utils
 from common import filesystem
 from common import utils
-
+from experiment.measurer import detailed_coverage_data_utils
 
 MEASURED_FILES_STATE_NAME = 'measured-files'
+MEASURED_DETAILED_COVERAGE_STATE_NAME = 'measured-detailed-coverage-files'
 
 logger = logs.Logger('measure_worker')  # pylint: disable=invalid-name
 
@@ -62,6 +63,23 @@ def extract_corpus(corpus_archive: str, sha_blacklist: Set[str],
         filesystem.write(file_path, member_contents, 'wb')
 
 
+def record_segment_and_function_coverage(  # pylint: disable=too-many-arguments
+        cov_summary_file, benchmark, fuzzer, trial_num, time_stamp, directory,
+        cycle):
+    """Record the segment and function coverage of a particular trial on a
+    particular cycle given a coverage summary json file and generate
+    two csv file containing segment and function coverage details respectively.
+    """
+    trail_specific_coverage_data = detailed_coverage_data_utils. \
+        extract_segments_and_functions_from_summary_json(
+            cov_summary_file, benchmark, fuzzer,
+            trial_num, time_stamp)
+    # Generating compressed (gz) csv files in the instance currently.
+    trail_specific_coverage_data.generate_csv_files(directory,
+                                                    trial_id=trial_num,
+                                                    cycle=cycle)
+
+
 class StateFile:
     """A class representing the state of measuring a particular trial on
     particular cycle. Objects of this class are backed by files stored in the
@@ -75,8 +93,8 @@ class StateFile:
 
     def _get_bucket_cycle_state_file_path(self, cycle: int) -> str:
         """Get the state file path in the bucket."""
-        state_file_name = experiment_utils.get_cycle_filename(
-            self.name, cycle) + '.json'
+        state_file_name = experiment_utils.get_cycle_filename(self.name,
+                                                              cycle) + '.json'
         state_file_path = os.path.join(self.state_dir, state_file_name)
         return exp_path.filestore(pathlib.Path(state_file_path))
 

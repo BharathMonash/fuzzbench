@@ -28,7 +28,8 @@ from common import utils
 from experiment.measurer import detailed_coverage_data_utils
 
 MEASURED_FILES_STATE_NAME = 'measured-files'
-MEASURED_DETAILED_COVERAGE_STATE_NAME = 'measured-detailed-coverage-files'
+DETAILED_COVERAGE_FUNCTIONS_STATE_NAME = 'measured-detailed-coverage-data'
+DETAILED_COVERAGE_SEGMENTS_STATE_NAME = 'measured-detailed-coverage-data'
 
 logger = logs.Logger('measure_worker')  # pylint: disable=invalid-name
 
@@ -63,9 +64,8 @@ def extract_corpus(corpus_archive: str, sha_blacklist: Set[str],
         filesystem.write(file_path, member_contents, 'wb')
 
 
-def record_segment_and_function_coverage(  # pylint: disable=too-many-arguments
-        cov_summary_file, benchmark, fuzzer, trial_num, time_stamp, directory,
-        cycle):
+def record_segment_and_function_coverage(cov_summary_file, benchmark, fuzzer,
+                                         trial_num, time_stamp):
     """Record the segment and function coverage of a particular trial on a
     particular cycle given a coverage summary json file and generate
     two csv file containing segment and function coverage details respectively.
@@ -74,10 +74,8 @@ def record_segment_and_function_coverage(  # pylint: disable=too-many-arguments
         extract_segments_and_functions_from_summary_json(
             cov_summary_file, benchmark, fuzzer,
             trial_num, time_stamp)
-    # Generating compressed (gz) csv files in the instance currently.
-    trail_specific_coverage_data.generate_csv_files(directory,
-                                                    trial_id=trial_num,
-                                                    cycle=cycle)
+
+    return trail_specific_coverage_data
 
 
 class StateFile:
@@ -92,10 +90,24 @@ class StateFile:
         self._prev_state = None
 
     def _get_bucket_cycle_state_file_path(self, cycle: int) -> str:
-        """Get the state file path in the bucket."""
+        """Gets the state file path in the bucket."""
         state_file_name = experiment_utils.get_cycle_filename(self.name,
                                                               cycle) + '.json'
         state_file_path = os.path.join(self.state_dir, state_file_name)
+
+        return exp_path.filestore(pathlib.Path(state_file_path))
+
+    def _get_bucket_detailed_coverage_data_state_file_path(self,
+                                                           file_type) -> str:
+        """Gets the detailed coverage data state file path in the bucket."""
+        if file_type == 'functions':
+            detailed_cov_data_file_name = self.name + '_functions' + '.json'
+        else:
+            detailed_cov_data_file_name = self.name + '_segments' + '.json'
+
+        state_file_path = os.path.join(self.state_dir,
+                                       detailed_cov_data_file_name)
+
         return exp_path.filestore(pathlib.Path(state_file_path))
 
     def _get_previous_cycle_state(self) -> list:
@@ -114,6 +126,23 @@ class StateFile:
 
         return json.loads(result.output)
 
+    def _get_previous_detailed_coverage_data_state(self, coverage_type) -> list:
+        """Returns the detailed coverage data state from the previous cycle.
+        Returns [] if |self.cycle| is 1."""
+        if self.cycle == 1:
+            return []
+
+        previous_state_file_bucket_path = (
+            self._get_bucket_detailed_coverage_data_state_file_path(
+                file_type=coverage_type))
+
+        result = filestore_utils.cat(previous_state_file_bucket_path,
+                                     expect_zero=False)
+        if result.retcode != 0:
+            return []
+
+        return json.loads(result.output)
+
     def get_previous(self):
         """Returns the previous state."""
         if self._prev_state is None:
@@ -121,10 +150,28 @@ class StateFile:
 
         return self._prev_state
 
+    def get_previous_detailed_coverage(self, coverage_type):
+        """Returns the previous state of detailed coverage."""
+        if self._prev_state is None:
+            self._prev_state = (self._get_previous_detailed_coverage_data_state(
+                coverage_type=coverage_type))
+
+        return self._prev_state
+
     def set_current(self, state):
         """Sets the state for this cycle in the bucket."""
         state_file_bucket_path = self._get_bucket_cycle_state_file_path(
             self.cycle)
+        with tempfile.NamedTemporaryFile(mode='w') as temp_file:
+            temp_file.write(json.dumps(state))
+            temp_file.flush()
+            filestore_utils.cp(temp_file.name, state_file_bucket_path)
+
+    def set_current_detailed_coverage(self, state, coverage_type):
+        """Sets the state of detailed coverage in the bucket."""
+        state_file_bucket_path = (
+            self._get_bucket_detailed_coverage_data_state_file_path(
+                coverage_type))
         with tempfile.NamedTemporaryFile(mode='w') as temp_file:
             temp_file.write(json.dumps(state))
             temp_file.flush()

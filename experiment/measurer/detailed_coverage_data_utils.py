@@ -15,13 +15,8 @@
 segment and function coverage for the entire experiment
 (all Fuzzer-benchmark-trial combinations)."""
 
-import os
-
 import pandas as pd
 
-# Dependencies for the commented lines.
-# from common import experiment_path as exp_path
-# from common import filestore_utils
 from experiment.measurer import coverage_utils
 
 
@@ -62,37 +57,23 @@ class DetailedCoverageData:  # pylint: disable=too-many-instance-attributes
         self.segment_df = self.segment_df.append(insert_series,
                                                  ignore_index=True)
 
-    def generate_csv_files(self, trial_measurement_dir, trial_id, cycle):
-        """Generates three compressed CSV files containing coverage information
-        for all fuzzers, benchmarks, and trials. To maintain a small file size,
-        all strings, such as file and function names, are referenced by id and
-        resolved in 'names.csv'."""
+    def remove_redundant_entries(self):
+        """Removes redundant entries in segment_df. Before calling this
+        method, for each time stamp, segment_df contains all segments that are
+        covered in this time stamp. After calling this method, for each time
+        stamp, segment_df only contains segments that have been covered since
+        the previous time stamp. This significantly reduces the size of the
+        resulting CSV file."""
+        try:
+            # Drop duplicates but with different timestamps in segment data.
+            self.segment_df = self.segment_df.sort_values(by=['time'])
+            self.segment_df = self.segment_df.drop_duplicates(
+                subset=self.segment_df.columns.difference(['time']),
+                keep='first')
 
-        # Write CSV files to filestore.
-        def csv_filestore_helper(file_name, df, file_type):
-            """Helper method for storing csv files in filestore."""
-
-            if file_type == 'function':
-                src = os.path.join(trial_measurement_dir, 'functions_coverage',
-                                   file_name)
-            else:
-                src = os.path.join(trial_measurement_dir, 'segments_coverage',
-                                   file_name)
-
-            df.to_csv(src, index=False, compression='infer')
-            # the following commented lines lets us copy the file from instance
-            # file store to the local file store or the bucket.
-            #dst = exp_path.filestore(src)
-            #filestore_utils.cp(src, dst)
-
-        csv_filestore_helper(
-            'functions_{trial_id}_{cycle}.csv.gz'.format(trial_id=trial_id,
-                                                         cycle=cycle),
-            self.function_df, 'function')
-        csv_filestore_helper(
-            'segments_{trial_id}_{cycle}.csv.gz'.format(trial_id=trial_id,
-                                                        cycle=cycle),
-            self.segment_df, 'segment')
+        except (ValueError, KeyError, IndexError):
+            coverage_utils.logger.error(
+                'Error occurred when removing duplicates.')
 
 
 def extract_segments_and_functions_from_summary_json(  # pylint: disable=too-many-locals

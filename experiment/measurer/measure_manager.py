@@ -615,7 +615,7 @@ class SnapshotMeasurer(coverage_utils.TrialCoverage):  # pylint: disable=too-man
         self.save_measured_files_state(cycle)
         self.save_detailed_coverage_files_state(cycle, 'functions')
         self.save_detailed_coverage_files_state(cycle, 'segments')
-        # we can get rid of "self.detailed_coverage_data" once this fcntion
+        # we can get rid of "self.detailed_coverage_data" once this function
         # "save_state" method is invoked. But for now doing it here.
         # We dont wanna keep coverage data any longer that its is required.
         self.detailed_coverage_data = None

@@ -26,7 +26,6 @@ from database import models
 from database import utils as db_utils
 from experiment.build import build_utils
 from experiment.measurer import measure_manager
-from experiment.measurer import detailed_coverage_data_utils
 from test_libs import utils as test_utils
 
 TEST_DATA_PATH = os.path.join(os.path.dirname(__file__), 'test_data')
@@ -168,23 +167,20 @@ def test_generate_summary(mocked_get_coverage_binary, mocked_execute,
 @mock.patch('common.logs.error')
 @mock.patch('experiment.measurer.measure_manager.initialize_logs')
 @mock.patch('multiprocessing.Queue')
-@mock.patch('multiprocessing.list')
 @mock.patch('experiment.measurer.measure_manager.measure_snapshot_coverage')
 def test_measure_trial_coverage(mocked_measure_snapshot_coverage, mocked_queue,
-                                _, __, mocked_trial_coverage_data_containers):
+                                _, __):
     """Tests that measure_trial_coverage works as expected."""
     min_cycle = 1
     max_cycle = 10
     measure_request = measure_manager.SnapshotMeasureRequest(
         FUZZER, BENCHMARK, TRIAL_NUM, min_cycle)
 
-    measure_manager.measure_trial_coverage(
-        measure_request, max_cycle, mocked_queue(),
-        mocked_trial_coverage_data_containers)
+    measure_manager.measure_trial_coverage(measure_request, max_cycle,
+                                           mocked_queue())
 
     expected_calls = [
-        mock.call(FUZZER, BENCHMARK, TRIAL_NUM, cycle,
-                  mocked_trial_coverage_data_containers)
+        mock.call(FUZZER, BENCHMARK, TRIAL_NUM, cycle)
         for cycle in range(min_cycle, max_cycle + 1)
     ]
     assert mocked_measure_snapshot_coverage.call_args_list == expected_calls
@@ -192,26 +188,21 @@ def test_measure_trial_coverage(mocked_measure_snapshot_coverage, mocked_queue,
 
 @mock.patch('common.filestore_utils.ls')
 @mock.patch('common.filestore_utils.rsync')
-@mock.patch('multiprocessing.Manager')
-def test_measure_all_trials_not_ready(mocked_rsync, mocked_ls, mocked_manager,
-                                      experiment):
+def test_measure_all_trials_not_ready(mocked_rsync, mocked_ls, experiment):
     """Test running measure_all_trials before it is ready works as intended."""
     mocked_ls.return_value = new_process.ProcessResult(1, '', False)
     assert measure_manager.measure_all_trials(
         experiment_utils.get_experiment_name(), MAX_TOTAL_TIME,
-        test_utils.MockPool(), mocked_manager, queue.Queue(),
-        detailed_coverage_data_utils.DetailedCoverageData())
+        test_utils.MockPool(), queue.Queue())
     assert not mocked_rsync.called
 
 
-@mock.patch('multiprocessing.list')
 @mock.patch('multiprocessing.pool.ThreadPool', test_utils.MockPool)
 @mock.patch('common.new_process.execute')
 @mock.patch('common.filesystem.directories_have_same_files')
-@mock.patch('multiprocessing.Manager')
 @pytest.mark.skip(reason="See crbug.com/1012329")
 def test_measure_all_trials_no_more(mocked_directories_have_same_files,
-                                    mocked_execute, mocked_manager):
+                                    mocked_execute):
     """Test measure_all_trials does what is intended when the experiment is
     done."""
     mocked_directories_have_same_files.return_value = True
@@ -219,8 +210,7 @@ def test_measure_all_trials_no_more(mocked_directories_have_same_files,
     mock_pool = test_utils.MockPool()
     assert not measure_manager.measure_all_trials(
         experiment_utils.get_experiment_name(), MAX_TOTAL_TIME, mock_pool,
-        mocked_manager, queue.Queue(),
-        detailed_coverage_data_utils.DetailedCoverageData())
+        queue.Queue())
 
 
 def test_is_cycle_unchanged_doesnt_exist(experiment):
@@ -313,12 +303,7 @@ def test_run_cov_new_units(_, mocked_execute, fs, environ):
     snapshot_measurer = measure_manager.SnapshotMeasurer(
         FUZZER, BENCHMARK, TRIAL_NUM, SNAPSHOT_LOGGER)
     snapshot_measurer.initialize_measurement_dirs()
-    shared_units = ['shared1', 'shared2']
-    fs.create_file(snapshot_measurer.measured_files_path,
-                   contents='\n'.join(shared_units))
-    for unit in shared_units:
-        fs.create_file(os.path.join(snapshot_measurer.corpus_dir, unit))
-
+    # TODO(metzman): Test that already measured files are not remeasured.
     new_units = ['new1', 'new2']
     for unit in new_units:
         fs.create_file(os.path.join(snapshot_measurer.corpus_dir, unit))
@@ -432,54 +417,32 @@ class TestIntegrationMeasurement:
             # integration tests.
             snapshot = measure_manager.measure_snapshot_coverage(
                 snapshot_measurer.fuzzer, snapshot_measurer.benchmark,
-                snapshot_measurer.trial_num, cycle, mocked_df_container_list)
+                snapshot_measurer.trial_num, cycle)
         assert snapshot
         assert snapshot.time == cycle * experiment_utils.get_snapshot_seconds()
         assert snapshot.edges_covered == 13178
-
-
-@pytest.mark.parametrize('archive_name',
-                         ['libfuzzer-corpus.tgz', 'afl-corpus.tgz'])
-def test_extract_corpus(archive_name, tmp_path):
-    """"Tests that extract_corpus unpacks a corpus as we expect."""
-    archive_path = get_test_data_path(archive_name)
-    measure_manager.extract_corpus(archive_path, set(), tmp_path)
-    expected_corpus_files = {
-        '5ea57dfc9631f35beecb5016c4f1366eb6faa810',
-        '2f1507c3229c5a1f8b619a542a8e03ccdbb3c29c',
-        'b6ccc20641188445fa30c8485a826a69ac4c6b60'
-    }
-    assert expected_corpus_files.issubset(set(os.listdir(tmp_path)))
 
 
 @mock.patch('time.sleep', return_value=None)
 @mock.patch('experiment.measurer.measure_manager.set_up_coverage_binaries')
 @mock.patch('experiment.measurer.measure_manager.measure_all_trials',
             return_value=False)
-@mock.patch('multiprocessing.Manager')
-@mock.patch('multiprocessing.pool')
 @mock.patch('experiment.scheduler.all_trials_ended', return_value=True)
-def test_measure_loop_end(_, __, ___, ____, _____, ______, experiment_config,
-                          db_experiment):
+def test_measure_loop_end(_, __, ___, ____, experiment_config, db_experiment):
     """Tests that measure_loop stops when there is nothing left to measure. In
     this test, there is nothing left to measure on the first call."""
 
-    measure_manager.measure_loop(
-        experiment_config, 100,
-        detailed_coverage_data_utils.DetailedCoverageData())
+    measure_manager.measure_loop(experiment_config, 100)
     # If everything went well, we should get to this point without any
     # exceptions.
 
 
 @mock.patch('time.sleep', return_value=None)
 @mock.patch('experiment.measurer.measure_manager.set_up_coverage_binaries')
-@mock.patch('multiprocessing.Manager')
-@mock.patch('multiprocessing.pool')
 @mock.patch('experiment.scheduler.all_trials_ended', return_value=True)
 @mock.patch('experiment.measurer.measure_manager.measure_all_trials')
 def test_measure_loop_loop_until_end(mocked_measure_all_trials, _, __, ___,
-                                     ____, _____, experiment_config,
-                                     db_experiment):
+                                     experiment_config, db_experiment):
     """Test that measure loop will stop measuring when all trials have ended. In
     this test, there is more to measure for a few iterations, then the mocked
     functions will indicate that there is nothing left to measure."""
@@ -498,8 +461,9 @@ def test_measure_loop_loop_until_end(mocked_measure_all_trials, _, __, ___,
 
     mocked_measure_all_trials.side_effect = mock_measure_all_trials
     measure_manager.measure_loop(
-        experiment_config, 100,
-        detailed_coverage_data_utils.DetailedCoverageData())
+        experiment_config,
+        100,
+    )
     assert call_count == loop_iterations
 
 

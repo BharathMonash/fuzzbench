@@ -35,7 +35,7 @@ def build(*args):  # pylint: disable=too-many-branches,too-many-statements
     if 'BUILD_MODES' in os.environ:
         build_modes = os.environ['BUILD_MODES'].split(',')
 
-    # Dummy comment.
+    # Placeholder comment.
     build_directory = os.environ['OUT']
 
     # If nothing was set this is the default:
@@ -188,13 +188,20 @@ def fuzz(input_corpus, output_corpus, target_binary, flags=tuple(), skip=False):
     # os.environ['AFL_PRELOAD'] = '/afl/libdislocator.so'
 
     flags = list(flags)
+
+    if os.path.exists('./afl++.dict'):
+        flags += ['-x', './afl++.dict']
+    # Move the following to skip for upcoming _double tests:
+    if os.path.exists(cmplog_target_binary):
+        flags += ['-c', cmplog_target_binary]
+
     if not skip:
         if not flags or not flags[0] == '-Q' and '-p' not in flags:
             flags += ['-p', 'fast']
-        if os.path.exists(cmplog_target_binary):
-            flags += ['-c', cmplog_target_binary]
-        if os.path.exists('./afl++.dict'):
-            flags += ['-x', './afl++.dict']
+        if ((not flags or (not '-l' in flags and not '-R' in flags)) and
+                os.path.exists(cmplog_target_binary)):
+            flags += ['-l', '2']
+        os.environ['AFL_DISABLE_TRIM'] = "1"
         if 'ADDITIONAL_ARGS' in os.environ:
             flags += os.environ['ADDITIONAL_ARGS'].split(' ')
 

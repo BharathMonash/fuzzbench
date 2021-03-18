@@ -19,7 +19,7 @@ FROM $parent_image
 RUN apt-get update && \
     apt-get install -y wget libstdc++-5-dev libexpat1-dev && \
     apt-get install -y apt-utils apt-transport-https ca-certificates && \
-    echo deb http://apt.llvm.org/xenial/ llvm-toolchain-xenial main >> /etc/apt/sources.list && \
+    echo deb http://apt.llvm.org/xenial/ llvm-toolchain-xenial-12 main >> /etc/apt/sources.list && \
     echo deb http://ppa.launchpad.net/ubuntu-toolchain-r/test/ubuntu xenial main >> /etc/apt/sources.list && \
     wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add - && \
     apt-key adv --recv-keys --keyserver keyserver.ubuntu.com 1E9377A2BA9EF27F && \
@@ -34,7 +34,7 @@ RUN apt-get update && \
 # Download afl++
 RUN git clone https://github.com/AFLplusplus/AFLplusplus.git /afl && \
     cd /afl && \
-    git checkout 4581ad3df9a3e98b065c61d1f392398973669479
+    git checkout ec737f3368e678cbee3a916d4ef6fb683ebfa1f0
     
 # Build without Python support as we don't need it.
 # Set AFL_NO_X86 to skip flaky tests.

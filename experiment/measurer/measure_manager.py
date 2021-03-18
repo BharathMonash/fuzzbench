@@ -22,12 +22,11 @@ import os
 import pathlib
 import posixpath
 import sys
-import tempfile
 import tarfile
+import tempfile
 import time
 from typing import List, Set
 import queue
-
 import pandas as pd
 
 from sqlalchemy import func
@@ -40,17 +39,16 @@ from common import filesystem
 from common import fuzzer_stats
 from common import filestore_utils
 from common import logs
-from common import utils
 from database import utils as db_utils
 from database import models
 from experiment.build import build_utils
-from experiment.measurer import detailed_coverage_data_utils
 from experiment.measurer import coverage_utils
+from experiment.measurer import measure_worker
 from experiment.measurer import run_coverage
 from experiment.measurer import run_crashes
 from experiment import scheduler
 
-logger = logs.Logger('measurer')  # pylint: disable=invalid-name
+logger = logs.Logger('measure_manager')  # pylint: disable=invalid-name
 
 SnapshotMeasureRequest = collections.namedtuple(
     'SnapshotMeasureRequest', ['fuzzer', 'benchmark', 'trial_id', 'cycle'])
@@ -73,14 +71,10 @@ def measure_main(experiment_config):
     initialize_logs()
     logger.info('Start measuring.')
 
-    # Create data frame container for segment and function coverage info.
-    detailed_coverage_data = (
-        detailed_coverage_data_utils.DetailedCoverageData())
-
     # Start the measure loop first.
     experiment = experiment_config['experiment']
     max_total_time = experiment_config['max_total_time']
-    measure_loop(experiment, max_total_time, detailed_coverage_data)
+    measure_loop(experiment, max_total_time)
 
     # Clean up resources.
     gc.collect()
@@ -88,13 +82,10 @@ def measure_main(experiment_config):
     # Do the final measuring and store the coverage data.
     coverage_utils.generate_coverage_reports(experiment_config)
 
-    # Generate segment and function coverage CSV files.
-    detailed_coverage_data.generate_csv_files()
-
     logger.info('Finished measuring.')
 
 
-def measure_loop(experiment: str, max_total_time: int, detailed_coverage_data):
+def measure_loop(experiment: str, max_total_time: int):
     """Continuously measure trials for |experiment|."""
     logger.info('Start measure_loop.')
 
@@ -109,8 +100,7 @@ def measure_loop(experiment: str, max_total_time: int, detailed_coverage_data):
                 # races.
                 all_trials_ended = scheduler.all_trials_ended(experiment)
 
-                if not measure_all_trials(experiment, max_total_time, pool,
-                                          manager, q, detailed_coverage_data):
+                if not measure_all_trials(experiment, max_total_time, pool, q):
                     # We didn't measure any trials.
                     if all_trials_ended:
                         # There are no trials producing snapshots to measure.
@@ -126,8 +116,7 @@ def measure_loop(experiment: str, max_total_time: int, detailed_coverage_data):
 
 
 def measure_all_trials(  # pylint: disable=too-many-arguments,too-many-locals
-        experiment: str, max_total_time: int, pool, manager, q,
-        detailed_coverage_data) -> bool:  # pylint: disable=invalid-name
+        experiment: str, max_total_time: int, pool, q) -> bool:  # pylint: disable=invalid-name
     """Get coverage data (with coverage runs) for all active trials. Note that
     this should not be called unless multiprocessing.set_start_method('spawn')
     was called first. Otherwise it will use fork which breaks logging."""
@@ -143,13 +132,8 @@ def measure_all_trials(  # pylint: disable=too-many-arguments,too-many-locals
     if not unmeasured_snapshots:
         return False
 
-    # Multiprocessing list to store all trial-specific detailed_coverage_data.
-    trail_specific_coverage_data_list = (
-        manager.list(  # pytype:disable=attribute-error
-            [detailed_coverage_data]))
-
     measure_trial_coverage_args = [
-        (unmeasured_snapshot, max_cycle, q, trail_specific_coverage_data_list)
+        (unmeasured_snapshot, max_cycle, q)
         for unmeasured_snapshot in unmeasured_snapshots
     ]
 
@@ -197,18 +181,6 @@ def measure_all_trials(  # pylint: disable=too-many-arguments,too-many-locals
 
     # If we have any snapshots left save them now.
     save_snapshots()
-
-    # Concatenate all trial-specific data frames and remove duplicates.
-    detailed_coverage_data.segment_df = pd.concat(
-        [df.segment_df for df in trail_specific_coverage_data_list],
-        ignore_index=True)
-    detailed_coverage_data.function_df = pd.concat(
-        [df.function_df for df in trail_specific_coverage_data_list],
-        ignore_index=True)
-    detailed_coverage_data.name_df = pd.concat(
-        [df.name_df for df in trail_specific_coverage_data_list],
-        ignore_index=True)
-    detailed_coverage_data.remove_redundant_duplicates()
 
     logger.info('Done measuring all trials.')
     return snapshots_measured
@@ -318,36 +290,6 @@ def get_unmeasured_snapshots(experiment: str,
     return unmeasured_first_snapshots + unmeasured_latest_snapshots
 
 
-def extract_corpus(corpus_archive: str, sha_blacklist: Set[str],
-                   output_directory: str):
-    """Extract a corpus from |corpus_archive| to |output_directory|."""
-    pathlib.Path(output_directory).mkdir(exist_ok=True)
-    tar = tarfile.open(corpus_archive, 'r:gz')
-    for member in tar.getmembers():
-
-        if not member.isfile():
-            # We don't care about directory structure. So skip if not a file.
-            continue
-
-        member_file_handle = tar.extractfile(member)
-        if not member_file_handle:
-            logger.info('Failed to get handle to %s', member)
-            continue
-
-        member_contents = member_file_handle.read()
-        filename = utils.string_hash(member_contents)
-        if filename in sha_blacklist:
-            continue
-
-        file_path = os.path.join(output_directory, filename)
-
-        if os.path.exists(file_path):
-            # Don't write out duplicates in the archive.
-            continue
-
-        filesystem.write(file_path, member_contents, 'wb')
-
-
 class SnapshotMeasurer(coverage_utils.TrialCoverage):  # pylint: disable=too-many-instance-attributes
     """Class used for storing details needed to measure coverage of a particular
     trial."""
@@ -364,10 +306,7 @@ class SnapshotMeasurer(coverage_utils.TrialCoverage):  # pylint: disable=too-man
         self.coverage_dir = os.path.join(self.measurement_dir, 'coverage')
         self.trial_dir = os.path.join(self.work_dir, 'experiment-folders',
                                       self.benchmark_fuzzer_trial_dir)
-
-        # Stores the files that have already been measured for a trial.
-        self.measured_files_path = os.path.join(self.report_dir,
-                                                'measured-files.txt')
+        self.detailed_coverage_data = None
 
         # Used by the runner to signal that there won't be a corpus archive for
         # a cycle because the corpus hasn't changed since the last cycle.
@@ -385,6 +324,8 @@ class SnapshotMeasurer(coverage_utils.TrialCoverage):  # pylint: disable=too-man
         self.cov_summary_file = os.path.join(self.report_dir,
                                              'cov_summary.json')
 
+        self.state_dir = os.path.join(self.measurement_dir, 'state')
+
     def get_profraw_files(self):
         """Return generated profraw files."""
         return [
@@ -395,7 +336,11 @@ class SnapshotMeasurer(coverage_utils.TrialCoverage):  # pylint: disable=too-man
     def initialize_measurement_dirs(self):
         """Initialize directories that will be needed for measuring
         coverage."""
-        for directory in [self.corpus_dir, self.coverage_dir, self.crashes_dir]:
+        for directory in [
+                self.corpus_dir,
+                self.coverage_dir,
+                self.crashes_dir,
+        ]:
             filesystem.recreate_directory(directory)
         filesystem.create_directory(self.report_dir)
 
@@ -444,16 +389,12 @@ class SnapshotMeasurer(coverage_utils.TrialCoverage):  # pylint: disable=too-man
                 'Coverage summary json file defective or missing.')
             return 0
 
-    def record_segment_and_function_coverage(self,
-                                             trail_specific_coverage_data_list,
-                                             time_stamp):
-        """Returns a trial specific data frame with current segment and
-        function coverage"""
-        trail_specific_coverage_data_list.append(
-            detailed_coverage_data_utils.
-            extract_segments_and_functions_from_summary_json(
-                self.cov_summary_file, self.benchmark, self.fuzzer,
-                self.trial_num, time_stamp))
+    def record_segment_and_function_coverage(self, time_stamp):
+        """Measure current segment and function coverage for the cycle."""
+        coverage_data = measure_worker.record_segment_and_function_coverage(
+            self.cov_summary_file, self.benchmark, self.fuzzer, self.trial_num,
+            time_stamp)
+        return coverage_data
 
     def generate_profdata(self, cycle: int):
         """Generate .profdata file from .profraw file."""
@@ -523,20 +464,21 @@ class SnapshotMeasurer(coverage_utils.TrialCoverage):  # pylint: disable=too-man
         unchanged_cycles = get_unchanged_cycles()
         return cycle in unchanged_cycles
 
-    def extract_corpus(self, corpus_archive_path) -> bool:
+    def extract_corpus(self, corpus_archive_path, cycle) -> bool:
         """Extract the corpus archive for this cycle if it exists."""
         if not os.path.exists(corpus_archive_path):
             self.logger.warning('Corpus not found: %s.', corpus_archive_path)
             return False
 
-        already_measured_units = self.get_measured_files()
+        already_measured_units = self.get_prev_measured_files(cycle)
         crash_blacklist = self.UNIT_BLACKLIST[self.benchmark]
         unit_blacklist = already_measured_units.union(crash_blacklist)
 
-        extract_corpus(corpus_archive_path, unit_blacklist, self.corpus_dir)
+        measure_worker.extract_corpus(corpus_archive_path, unit_blacklist,
+                                      self.corpus_dir)
         return True
 
-    def save_crash_files(self, cycle):
+    def archive_crashes(self, cycle):
         """Save crashes in per-cycle crash archive."""
         crashes_archive_name = experiment_utils.get_crashes_archive_name(cycle)
         archive_path = os.path.join(os.path.dirname(self.crashes_dir),
@@ -562,7 +504,7 @@ class SnapshotMeasurer(coverage_utils.TrialCoverage):  # pylint: disable=too-man
             return []
 
         logs.info('Saving crash files crashes for cycle %d.', cycle)
-        self.save_crash_files(cycle)
+        self.archive_crashes(cycle)
 
         logs.info('Processing crashes for cycle %d.', cycle)
         app_binary = coverage_utils.get_coverage_binary(self.benchmark)
@@ -580,20 +522,81 @@ class SnapshotMeasurer(coverage_utils.TrialCoverage):  # pylint: disable=too-man
                              crash_stacktrace=crash.crash_stacktrace))
         return crashes
 
-    def update_measured_files(self):
-        """Updates the measured-files.txt file for this trial with
-        files measured in this snapshot."""
-        current_files = set(os.listdir(self.corpus_dir))
-        already_measured = self.get_measured_files()
-        filesystem.write(self.measured_files_path,
-                         '\n'.join(current_files.union(already_measured)))
+    def save_detailed_coverage_files_state(self, cycle, coverage_type):
+        """Saves the measured-detailed-coverage-files StateFile for this cycle
+        with the detailed coverage files measured in this cycle and previous
+        ones."""
+        measured_coverage_data = self.get_detailed_coverage_files_state(
+            cycle, coverage_type)
 
-    def get_measured_files(self):
-        """Returns a the set of files that have been measured for this
-        snapshot's trials."""
-        if not os.path.exists(self.measured_files_path):
-            return set()
-        return set(filesystem.read(self.measured_files_path).splitlines())
+        if not measured_coverage_data:
+            if coverage_type == 'segments':
+                all_data = self.detailed_coverage_data.segment_df.to_json(
+                    orient='table')
+            else:
+                all_data = self.detailed_coverage_data.function_df.to_json(
+                    orient='table')
+
+        else:
+            temp_df = pd.read_json(measured_coverage_data, orient='table')
+            if coverage_type == 'segments':
+                self.detailed_coverage_data.segment_df = pd.concat(
+                    self.detailed_coverage_data.segment_df, temp_df)
+                self.detailed_coverage_data.remove_redundant_entries()
+                all_data = self.detailed_coverage_data.segment_df.to_json(
+                    orient='table')
+            else:
+                self.detailed_coverage_data.function_df = pd.concat(
+                    self.detailed_coverage_data.fucntion_df, temp_df)
+                all_data = self.detailed_coverage_data.fucntion_df.to_json(
+                    orient='table')
+
+        measured_coverage_data.set_current_detailed_coverage(
+            all_data, coverage_type)
+
+    def save_measured_files_state(self, cycle):
+        """Saves the measured-files StateFile for this cycle with files
+        measured in this cycle and previous ones."""
+        current_corpus_files = set(os.listdir(self.corpus_dir))
+        previous_files = self.get_prev_measured_files(cycle)
+        all_files = previous_files.union(current_corpus_files)
+        measured_files_state = self.get_measured_files_state(cycle)
+        measured_files_state.set_current(list(all_files))
+        return all_files
+
+    def get_prev_measured_files(self, cycle) -> Set[str]:
+        """Returns the set of files measured in the previous cycle or an empty
+        list if this is the first cycle."""
+
+        measured_files_state = self.get_measured_files_state(cycle)
+        return set(measured_files_state.get_previous())
+
+    def get_prev_detailed_coverage_data(self, cycle, coverage_type):
+        """Returns the detailed coverage data up till the previous cycle or an
+        empty list if this is the first cycle."""
+        measured_files_state = self.get_detailed_coverage_files_state(
+            cycle, coverage_type)
+        return measured_files_state.get_previous_detailed_coverage(
+            coverage_type=coverage_type)
+
+    def get_detailed_coverage_files_state(self, cycle, coverage_type):
+        """Returns the StateFile for measured-detailed-coverage-files of this
+        cycle."""
+        if coverage_type == 'functions':
+            state_file = measure_worker.StateFile(
+                measure_worker.DETAILED_COVERAGE_FUNCTIONS_STATE_NAME,
+                self.state_dir, cycle)
+        else:
+            state_file = measure_worker.StateFile(
+                measure_worker.DETAILED_COVERAGE_SEGMENTS_STATE_NAME,
+                self.state_dir, cycle)
+
+        return state_file
+
+    def get_measured_files_state(self, cycle):
+        """Returns the StateFile for measured-files of this cycle."""
+        return measure_worker.StateFile(
+            measure_worker.MEASURED_FILES_STATE_NAME, self.state_dir, cycle)
 
     def get_fuzzer_stats(self, cycle):
         """Get the fuzzer stats for |cycle|."""
@@ -605,6 +608,15 @@ class SnapshotMeasurer(coverage_utils.TrialCoverage):  # pylint: disable=too-man
         except (ValueError, json.decoder.JSONDecodeError):
             logger.error('Stats are invalid.')
             return None
+
+    def save_state(self, cycle):
+        """Save state for |cycle|."""
+        self.save_measured_files_state(cycle)
+        self.save_detailed_coverage_files_state(cycle, 'functions')
+        self.save_detailed_coverage_files_state(cycle, 'segments')
+        # we can get rid of "self.detailed_coverage_data" once this fcntion
+        # "save_state" method is invoked.
+        # TODO(metzman): Save edges/regions state.
 
 
 def get_fuzzer_stats(stats_filestore_path):
@@ -621,8 +633,8 @@ def get_fuzzer_stats(stats_filestore_path):
 
 
 def measure_trial_coverage(  # pylint: disable=invalid-name,too-many-arguments
-        measure_req, max_cycle: int, q: multiprocessing.Queue,
-        trail_specific_coverage_data_list) -> models.Snapshot:
+        measure_req, max_cycle: int,
+        q: multiprocessing.Queue) -> models.Snapshot:
     """Measure the coverage obtained by |trial_num| on |benchmark| using
     |fuzzer|."""
     initialize_logs()
@@ -631,9 +643,9 @@ def measure_trial_coverage(  # pylint: disable=invalid-name,too-many-arguments
     # Add 1 to ensure we measure the last cycle.
     for cycle in range(min_cycle, max_cycle + 1):
         try:
-            snapshot = measure_snapshot_coverage(
-                measure_req.fuzzer, measure_req.benchmark, measure_req.trial_id,
-                cycle, trail_specific_coverage_data_list)
+            snapshot = measure_snapshot_coverage(measure_req.fuzzer,
+                                                 measure_req.benchmark,
+                                                 measure_req.trial_id, cycle)
             if not snapshot:
                 break
             q.put(snapshot)
@@ -649,8 +661,8 @@ def measure_trial_coverage(  # pylint: disable=invalid-name,too-many-arguments
 
 
 def measure_snapshot_coverage(  # pylint: disable=too-many-locals
-        fuzzer: str, benchmark: str, trial_num: int, cycle: int,
-        trail_specific_coverage_data_list) -> models.Snapshot:
+        fuzzer: str, benchmark: str, trial_num: int,
+        cycle: int) -> models.Snapshot:
     """Measure coverage of the snapshot for |cycle| for |trial_num| of |fuzzer|
     and |benchmark|."""
     snapshot_logger = logs.Logger('measurer',
@@ -669,8 +681,8 @@ def measure_snapshot_coverage(  # pylint: disable=too-many-locals
     if snapshot_measurer.is_cycle_unchanged(cycle):
         snapshot_logger.info('Cycle: %d is unchanged.', cycle)
         regions_covered = snapshot_measurer.get_current_coverage()
-        snapshot_measurer.record_segment_and_function_coverage(
-            trail_specific_coverage_data_list, this_time)
+        snapshot_measurer.detailed_coverage_data = (
+            snapshot_measurer.record_segment_and_function_coverage(this_time))
         fuzzer_stats_data = snapshot_measurer.get_fuzzer_stats(cycle)
         return models.Snapshot(time=this_time,
                                trial_id=trial_num,
@@ -694,7 +706,7 @@ def measure_snapshot_coverage(  # pylint: disable=too-many-locals
         return None
 
     snapshot_measurer.initialize_measurement_dirs()
-    snapshot_measurer.extract_corpus(corpus_archive_dst)
+    snapshot_measurer.extract_corpus(corpus_archive_dst, cycle)
     # Don't keep corpus archives around longer than they need to be.
     os.remove(corpus_archive_dst)
 
@@ -709,17 +721,14 @@ def measure_snapshot_coverage(  # pylint: disable=too-many-locals
 
     # Get the coverage of the new corpus units.
     regions_covered = snapshot_measurer.get_current_coverage()
-    snapshot_measurer.record_segment_and_function_coverage(
-        trail_specific_coverage_data_list, this_time)
+    snapshot_measurer.detailed_coverage_data = (
+        snapshot_measurer.record_segment_and_function_coverage(this_time))
     fuzzer_stats_data = snapshot_measurer.get_fuzzer_stats(cycle)
     snapshot = models.Snapshot(time=this_time,
                                trial_id=trial_num,
                                edges_covered=regions_covered,
                                fuzzer_stats=fuzzer_stats_data,
                                crashes=crashes)
-
-    # Record the new corpus files.
-    snapshot_measurer.update_measured_files()
 
     measuring_time = round(time.time() - measuring_start_time, 2)
     snapshot_logger.info('Measured cycle: %d in %f seconds.', cycle,
@@ -774,8 +783,7 @@ def main():
     experiment_name = experiment_utils.get_experiment_name()
 
     try:
-        measure_loop(experiment_name, int(sys.argv[1]),
-                     detailed_coverage_data_utils.DetailedCoverageData())
+        measure_loop(experiment_name, int(sys.argv[1]))
     except Exception as error:
         logs.error('Error conducting experiment.')
         raise error

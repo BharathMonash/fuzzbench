@@ -547,8 +547,8 @@ class SnapshotMeasurer(coverage_utils.TrialCoverage):  # pylint: disable=too-man
                     orient='table')
             else:
                 self.detailed_coverage_data.function_df = pd.concat(
-                    self.detailed_coverage_data.fucntion_df, temp_df)
-                all_data = self.detailed_coverage_data.fucntion_df.to_json(
+                    self.detailed_coverage_data.function_df, temp_df)
+                all_data = self.detailed_coverage_data.function_df.to_json(
                     orient='table')
 
         measured_coverage_data.set_current_detailed_coverage(

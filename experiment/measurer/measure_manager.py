@@ -343,6 +343,7 @@ class SnapshotMeasurer(coverage_utils.TrialCoverage):  # pylint: disable=too-man
         ]:
             filesystem.recreate_directory(directory)
         filesystem.create_directory(self.report_dir)
+        print("Initialized report directory")
 
     def run_cov_new_units(self):
         """Run the coverage binary on new units."""
@@ -615,7 +616,9 @@ class SnapshotMeasurer(coverage_utils.TrialCoverage):  # pylint: disable=too-man
         self.save_detailed_coverage_files_state(cycle, 'functions')
         self.save_detailed_coverage_files_state(cycle, 'segments')
         # we can get rid of "self.detailed_coverage_data" once this fcntion
-        # "save_state" method is invoked.
+        # "save_state" method is invoked. But for now doing it here.
+        # We dont wanna keep coverage data any longer that its is required.
+        self.detailed_coverage_data = None
         # TODO(metzman): Save edges/regions state.
 
 

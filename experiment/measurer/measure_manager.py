@@ -472,8 +472,7 @@ class SnapshotMeasurer(coverage_utils.TrialCoverage):  # pylint: disable=too-man
             self.logger.warning('Corpus not found: %s.', corpus_archive_path)
             return False
 
-        already_measured_units = self.get_prev_measured_files(
-            cycle, 'measured_file')
+        already_measured_units = self.get_prev_measured_files(cycle)
         crash_blacklist = self.UNIT_BLACKLIST[self.benchmark]
         unit_blacklist = already_measured_units.union(crash_blacklist)
 
@@ -531,7 +530,7 @@ class SnapshotMeasurer(coverage_utils.TrialCoverage):  # pylint: disable=too-man
         ones."""
         # Get coverage data for segments from previous cycles. Previous function
         # coverage data is not needed.
-        measured_segment_coverage_data = self.get_prev_measured_files(
+        measured_segment_coverage_data = self.get_prev_detailed_coverage_data(
             cycle, 'segment')
 
         # Read previous coverage data (for segments (JSON)) into data frames.
@@ -568,22 +567,24 @@ class SnapshotMeasurer(coverage_utils.TrialCoverage):  # pylint: disable=too-man
         """Saves the measured-files StateFile for this cycle with files
         measured in this cycle and previous ones."""
         current_corpus_files = set(os.listdir(self.corpus_dir))
-        previous_files = self.get_prev_measured_files(cycle, file_type)
+        previous_files = self.get_prev_measured_files(cycle)
         all_files = previous_files.union(current_corpus_files)
         measured_files_state = self.get_measured_files_state(cycle, file_type)
         measured_files_state.set_current(list(all_files), file_type)
         return all_files
 
-    def get_prev_measured_files(self, cycle, file_type) -> Set[str]:
+    def get_prev_measured_files(self, cycle) -> Set[str]:
         """Returns the set of files measured in the previous cycle or an empty
         list if this is the first cycle."""
-        measured_files_state = self.get_measured_files_state(cycle, file_type)
-        if file_type == 'segment' or 'function':
-            previous_state = measured_files_state.get_previous(file_type)
-        else:
-            previous_state = set(measured_files_state.get_previous(file_type))
+        measured_files_state = self.get_measured_files_state(
+            cycle, 'measured_file')
+        return set(measured_files_state.get_previous('measured_file'))
 
-        return previous_state
+    def get_prev_detailed_coverage_data(self, cycle, file_type):
+        """Returns the detailed coverage data in the previous cycle or an empty
+        list if this is the first cycle."""
+        measured_files_state = self.get_measured_files_state(cycle, file_type)
+        return measured_files_state.get_previous(file_type)
 
     def get_measured_files_state(self, cycle, file_type):
         """Returns the StateFile for measured-files of this cycle."""

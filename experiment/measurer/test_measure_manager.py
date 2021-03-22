@@ -365,12 +365,10 @@ class TestIntegrationMeasurement:
     # portable binary.
     @pytest.mark.skipif(not os.getenv('FUZZBENCH_TEST_INTEGRATION'),
                         reason='Not running integration tests.')
-    @mock.patch('multiprocessing.list')
     @mock.patch('experiment.measurer.measure_manager.SnapshotMeasurer'
                 '.is_cycle_unchanged')
     def test_measure_snapshot_coverage(  # pylint: disable=too-many-locals, too-many-arguments
-            self, mocked_is_cycle_unchanged, mocked_df_container_list, db,
-            experiment, tmp_path):
+            self, mocked_is_cycle_unchanged, db, experiment, tmp_path):
         """Integration test for measure_snapshot_coverage."""
         # WORK is set by experiment to a directory that only makes sense in a
         # fakefs. A directory containing necessary llvm tools is also added to

@@ -612,9 +612,10 @@ class SnapshotMeasurer(coverage_utils.TrialCoverage):  # pylint: disable=too-man
             logger.error('Stats are invalid.')
             return None
 
-    def save_state(self, cycle):
+    def save_state(self, cycle, this_time):
         """Save state for |cycle|."""
         self.save_measured_files_state(cycle, 'measured_file')
+        self.save_detailed_coverage_files_state(cycle, this_time)
         # TODO(metzman): Save edges/regions state.
 
 
@@ -680,7 +681,6 @@ def measure_snapshot_coverage(  # pylint: disable=too-many-locals
     if snapshot_measurer.is_cycle_unchanged(cycle):
         snapshot_logger.info('Cycle: %d is unchanged.', cycle)
         regions_covered = snapshot_measurer.get_current_coverage()
-        snapshot_measurer.save_detailed_coverage_files_state(cycle, this_time)
         fuzzer_stats_data = snapshot_measurer.get_fuzzer_stats(cycle)
         return models.Snapshot(time=this_time,
                                trial_id=trial_num,
@@ -719,7 +719,6 @@ def measure_snapshot_coverage(  # pylint: disable=too-many-locals
 
     # Get the coverage of the new corpus units.
     regions_covered = snapshot_measurer.get_current_coverage()
-    snapshot_measurer.save_detailed_coverage_files_state(cycle, this_time)
     fuzzer_stats_data = snapshot_measurer.get_fuzzer_stats(cycle)
     snapshot = models.Snapshot(time=this_time,
                                trial_id=trial_num,

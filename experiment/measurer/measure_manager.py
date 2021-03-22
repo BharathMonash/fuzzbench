@@ -390,11 +390,12 @@ class SnapshotMeasurer(coverage_utils.TrialCoverage):  # pylint: disable=too-man
                 'Coverage summary json file defective or missing.')
             return 0
 
-    def record_segment_and_function_coverage(self, time_stamp):
+    def record_segment_and_function_coverage(self, time_stamp,
+                                             trial_specific_coverage_data):
         """Measure current segment and function coverage for the cycle."""
         coverage_data = measure_worker.record_segment_and_function_coverage(
             self.cov_summary_file, self.benchmark, self.fuzzer, self.trial_num,
-            time_stamp)
+            time_stamp, trial_specific_coverage_data)
         return coverage_data
 
     def generate_profdata(self, cycle: int):
@@ -471,7 +472,8 @@ class SnapshotMeasurer(coverage_utils.TrialCoverage):  # pylint: disable=too-man
             self.logger.warning('Corpus not found: %s.', corpus_archive_path)
             return False
 
-        already_measured_units = self.get_prev_measured_files(cycle)
+        already_measured_units = self.get_prev_measured_files(
+            cycle, 'measured_file')
         crash_blacklist = self.UNIT_BLACKLIST[self.benchmark]
         unit_blacklist = already_measured_units.union(crash_blacklist)
 
@@ -523,81 +525,83 @@ class SnapshotMeasurer(coverage_utils.TrialCoverage):  # pylint: disable=too-man
                              crash_stacktrace=crash.crash_stacktrace))
         return crashes
 
-    def save_detailed_coverage_files_state(self, cycle, coverage_type):
+    def save_detailed_coverage_files_state(self, cycle, time_stamp):
         """Saves the measured-detailed-coverage-files StateFile for this cycle
         with the detailed coverage files measured in this cycle and previous
         ones."""
-        measured_coverage_data = self.get_detailed_coverage_files_state(
-            cycle, coverage_type)
+        # Get coverage data for segments and functions from previous cycles.
+        measured_segment_coverage_data = self.get_prev_measured_files(
+            cycle, 'segment')
+        measured_function_coverage_data = self.get_prev_measured_files(
+            cycle, 'function')
 
-        if not measured_coverage_data:
-            if coverage_type == 'segments':
-                all_data = self.detailed_coverage_data.segment_df.to_json(
-                    orient='table')
-            else:
-                all_data = self.detailed_coverage_data.function_df.to_json(
-                    orient='table')
+        # Read previous coverage data (JSON) into data frames.
+        self.detailed_coverage_data.segment_df = pd.read_json(
+            measured_segment_coverage_data, orient='table')
+        self.detailed_coverage_data.function_df = pd.read_json(
+            measured_function_coverage_data, orient='table')
 
-        else:
-            temp_df = pd.read_json(measured_coverage_data, orient='table')
-            if coverage_type == 'segments':
-                self.detailed_coverage_data.segment_df = pd.concat(
-                    self.detailed_coverage_data.segment_df, temp_df)
-                self.detailed_coverage_data.remove_redundant_entries()
-                all_data = self.detailed_coverage_data.segment_df.to_json(
-                    orient='table')
-            else:
-                self.detailed_coverage_data.function_df = pd.concat(
-                    self.detailed_coverage_data.function_df, temp_df)
-                all_data = self.detailed_coverage_data.function_df.to_json(
-                    orient='table')
+        # Record and append the new record to the data frame with old records.
+        # This way we can avoid having two data frames in memory
+        # (one for previous and one for current)
+        self.detailed_coverage_data = measure_worker.\
+            record_segment_and_function_coverage(
+                self.cov_summary_file, self.benchmark, self.fuzzer,
+                self.trial_num, time_stamp, self.detailed_coverage_data)
 
-        measured_coverage_data.set_current_detailed_coverage(
-            all_data, coverage_type)
+        # Convert the updated data frames back to JSON.
+        all_segment_data = self.detailed_coverage_data.segment_df.to_json(
+            orient='table')
+        all_function_data = self.detailed_coverage_data.function_df.to_json(
+            orient='table')
 
-    def save_measured_files_state(self, cycle):
+        # Get the state-file for the current cycle to set the current state.
+        segment_state = self.get_measured_files_state(cycle, 'segment')
+        function_state = self.get_measured_files_state(cycle, 'function')
+
+        # Store the data to appropriate state-files.
+        segment_state.set_current(all_segment_data, 'segment')
+        function_state.set_current(all_function_data, 'function')
+
+        # we can get rid of "self.detailed_coverage_data", we don't wanna keep
+        # coverage data any longer that it is required.
+        self.detailed_coverage_data = None
+
+    def save_measured_files_state(self, cycle, file_type):
         """Saves the measured-files StateFile for this cycle with files
         measured in this cycle and previous ones."""
         current_corpus_files = set(os.listdir(self.corpus_dir))
-        previous_files = self.get_prev_measured_files(cycle)
+        previous_files = self.get_prev_measured_files(cycle, file_type)
         all_files = previous_files.union(current_corpus_files)
-        measured_files_state = self.get_measured_files_state(cycle)
-        measured_files_state.set_current(list(all_files))
+        measured_files_state = self.get_measured_files_state(cycle, file_type)
+        measured_files_state.set_current(list(all_files), file_type)
         return all_files
 
-    def get_prev_measured_files(self, cycle) -> Set[str]:
+    def get_prev_measured_files(self, cycle, file_type) -> Set[str]:
         """Returns the set of files measured in the previous cycle or an empty
         list if this is the first cycle."""
-
-        measured_files_state = self.get_measured_files_state(cycle)
-        return set(measured_files_state.get_previous())
-
-    def get_prev_detailed_coverage_data(self, cycle, coverage_type):
-        """Returns the detailed coverage data up till the previous cycle or an
-        empty list if this is the first cycle."""
-        measured_files_state = self.get_detailed_coverage_files_state(
-            cycle, coverage_type)
-        return measured_files_state.get_previous_detailed_coverage(
-            coverage_type=coverage_type)
-
-    def get_detailed_coverage_files_state(self, cycle, coverage_type):
-        """Returns the StateFile for measured-detailed-coverage-files of this
-        cycle."""
-        if coverage_type == 'functions':
-            state_file = measure_worker.StateFile(
-                measure_worker.DETAILED_COVERAGE_FUNCTIONS_STATE_NAME,
-                self.state_dir, cycle)
+        measured_files_state = self.get_measured_files_state(cycle, file_type)
+        if file_type == 'segment' or 'function':
+            previous_state = measured_files_state.get_previous(file_type)
         else:
+            previous_state = set(measured_files_state.get_previous(file_type))
+
+        return previous_state
+
+    def get_measured_files_state(self, cycle, file_type):
+        """Returns the StateFile for measured-files of this cycle."""
+        if file_type == 'measured_file':
+            state_file = measure_worker.StateFile(
+                measure_worker.MEASURED_FILES_STATE_NAME, self.state_dir, cycle)
+        if file_type == 'segment':
             state_file = measure_worker.StateFile(
                 measure_worker.DETAILED_COVERAGE_SEGMENTS_STATE_NAME,
                 self.state_dir, cycle)
-
+        if file_type == 'function':
+            state_file = measure_worker.StateFile(
+                measure_worker.DETAILED_COVERAGE_FUNCTIONS_STATE_NAME,
+                self.state_dir, cycle)
         return state_file
-
-    def get_measured_files_state(self, cycle):
-        """Returns the StateFile for measured-files of this cycle."""
-        return measure_worker.StateFile(
-            measure_worker.MEASURED_FILES_STATE_NAME, self.state_dir, cycle)
 
     def get_fuzzer_stats(self, cycle):
         """Get the fuzzer stats for |cycle|."""
@@ -612,13 +616,7 @@ class SnapshotMeasurer(coverage_utils.TrialCoverage):  # pylint: disable=too-man
 
     def save_state(self, cycle):
         """Save state for |cycle|."""
-        self.save_measured_files_state(cycle)
-        self.save_detailed_coverage_files_state(cycle, 'functions')
-        self.save_detailed_coverage_files_state(cycle, 'segments')
-        # we can get rid of "self.detailed_coverage_data" once this function
-        # "save_state" method is invoked. But for now doing it here.
-        # We dont wanna keep coverage data any longer that its is required.
-        self.detailed_coverage_data = None
+        self.save_measured_files_state(cycle, 'measured_file')
         # TODO(metzman): Save edges/regions state.
 
 
@@ -684,8 +682,7 @@ def measure_snapshot_coverage(  # pylint: disable=too-many-locals
     if snapshot_measurer.is_cycle_unchanged(cycle):
         snapshot_logger.info('Cycle: %d is unchanged.', cycle)
         regions_covered = snapshot_measurer.get_current_coverage()
-        snapshot_measurer.detailed_coverage_data = (
-            snapshot_measurer.record_segment_and_function_coverage(this_time))
+        snapshot_measurer.save_detailed_coverage_files_state(cycle, this_time)
         fuzzer_stats_data = snapshot_measurer.get_fuzzer_stats(cycle)
         return models.Snapshot(time=this_time,
                                trial_id=trial_num,
@@ -724,8 +721,7 @@ def measure_snapshot_coverage(  # pylint: disable=too-many-locals
 
     # Get the coverage of the new corpus units.
     regions_covered = snapshot_measurer.get_current_coverage()
-    snapshot_measurer.detailed_coverage_data = (
-        snapshot_measurer.record_segment_and_function_coverage(this_time))
+    snapshot_measurer.save_detailed_coverage_files_state(cycle, this_time)
     fuzzer_stats_data = snapshot_measurer.get_fuzzer_stats(cycle)
     snapshot = models.Snapshot(time=this_time,
                                trial_id=trial_num,

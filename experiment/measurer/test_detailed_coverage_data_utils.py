@@ -43,10 +43,14 @@ def test_extract_segments_and_functions_from_summary_json_for_segments(fs):
     summary_json_file = get_test_data_path(SUMMARY_JSON_FILE)
     fs.add_real_file(summary_json_file, read_only=False)
 
+    trial_specific_coverage_data = detailed_coverage_data_utils.\
+        DetailedCoverageData()
+
     trial_specific_coverage_data = (
         detailed_coverage_data_utils.
         extract_segments_and_functions_from_summary_json(
-            summary_json_file, BENCHMARK, FUZZER, TRIAL_ID, TIMESTAMP))
+            summary_json_file, BENCHMARK, FUZZER, TRIAL_ID, TIMESTAMP,
+            trial_specific_coverage_data))
 
     # Assert length of resulting data frame is as expected.
     assert len(trial_specific_coverage_data.segment_df) == 16

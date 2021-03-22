@@ -28,8 +28,8 @@ from common import utils
 from experiment.measurer import detailed_coverage_data_utils
 
 MEASURED_FILES_STATE_NAME = 'measured-files'
-DETAILED_COVERAGE_FUNCTIONS_STATE_NAME = 'measured-detailed-coverage-data'
-DETAILED_COVERAGE_SEGMENTS_STATE_NAME = 'measured-detailed-coverage-data'
+DETAILED_COVERAGE_FUNCTIONS_STATE_NAME = 'measured-function-coverage-data'
+DETAILED_COVERAGE_SEGMENTS_STATE_NAME = 'measured-segment-coverage-data'
 
 logger = logs.Logger('measure_worker')  # pylint: disable=invalid-name
 
@@ -64,8 +64,9 @@ def extract_corpus(corpus_archive: str, sha_blacklist: Set[str],
         filesystem.write(file_path, member_contents, 'wb')
 
 
-def record_segment_and_function_coverage(cov_summary_file, benchmark, fuzzer,
-                                         trial_num, time_stamp):
+def record_segment_and_function_coverage(  # pylint: disable=too-many-arguments
+        cov_summary_file, benchmark, fuzzer, trial_num, time_stamp,
+        trial_specific_coverage_data):
     """Record the segment and function coverage of a particular trial on a
     particular cycle given a coverage summary json file and generate
     two csv file containing segment and function coverage details respectively.
@@ -73,7 +74,8 @@ def record_segment_and_function_coverage(cov_summary_file, benchmark, fuzzer,
     trail_specific_coverage_data = detailed_coverage_data_utils. \
         extract_segments_and_functions_from_summary_json(
             cov_summary_file, benchmark, fuzzer,
-            trial_num, time_stamp)
+            trial_num, time_stamp, trial_specific_coverage_data)
+    trial_specific_coverage_data.remove_redundant_entries()
 
     return trail_specific_coverage_data
 
@@ -89,35 +91,27 @@ class StateFile:
         self.cycle = cycle
         self._prev_state = None
 
-    def _get_bucket_cycle_state_file_path(self, cycle: int) -> str:
+    def _get_bucket_cycle_state_file_path(self, cycle: int, file_type) -> str:
         """Gets the state file path in the bucket."""
-        state_file_name = experiment_utils.get_cycle_filename(self.name,
-                                                              cycle) + '.json'
-        state_file_path = os.path.join(self.state_dir, state_file_name)
-
-        return exp_path.filestore(pathlib.Path(state_file_path))
-
-    def _get_bucket_detailed_coverage_data_state_file_path(self,
-                                                           file_type) -> str:
-        """Gets the detailed coverage data state file path in the bucket."""
-        if file_type == 'functions':
-            detailed_cov_data_file_name = self.name + '_functions' + '.json'
+        if file_type == 'measured_files' or 'segments':
+            state_file_name = experiment_utils.get_cycle_filename(
+                self.name, cycle) + '.json'
+            state_file_path = os.path.join(self.state_dir, state_file_name)
         else:
-            detailed_cov_data_file_name = self.name + '_segments' + '.json'
-
-        state_file_path = os.path.join(self.state_dir,
-                                       detailed_cov_data_file_name)
+            state_file_name = self.name + '.json'
+            state_file_path = os.path.join(self.state_dir, state_file_name)
 
         return exp_path.filestore(pathlib.Path(state_file_path))
 
-    def _get_previous_cycle_state(self) -> list:
+    def _get_previous_cycle_state(self, file_type) -> list:
         """Returns the state from the previous cycle. Returns [] if |self.cycle|
         is 1."""
         if self.cycle == 1:
             return []
 
         previous_state_file_bucket_path = (
-            self._get_bucket_cycle_state_file_path(self.cycle - 1))
+            self._get_bucket_cycle_state_file_path(self.cycle - 1,
+                                                   file_type=file_type))
 
         result = filestore_utils.cat(previous_state_file_bucket_path,
                                      expect_zero=False)
@@ -126,52 +120,18 @@ class StateFile:
 
         return json.loads(result.output)
 
-    def _get_previous_detailed_coverage_data_state(self, coverage_type) -> list:
-        """Returns the detailed coverage data state from the previous cycle.
-        Returns [] if |self.cycle| is 1."""
-        if self.cycle == 1:
-            return []
-
-        previous_state_file_bucket_path = (
-            self._get_bucket_detailed_coverage_data_state_file_path(
-                file_type=coverage_type))
-
-        result = filestore_utils.cat(previous_state_file_bucket_path,
-                                     expect_zero=False)
-        if result.retcode != 0:
-            return []
-
-        return json.loads(result.output)
-
-    def get_previous(self):
+    def get_previous(self, file_type):
         """Returns the previous state."""
         if self._prev_state is None:
-            self._prev_state = self._get_previous_cycle_state()
+            self._prev_state = self._get_previous_cycle_state(
+                file_type=file_type)
 
         return self._prev_state
 
-    def get_previous_detailed_coverage(self, coverage_type):
-        """Returns the previous state of detailed coverage."""
-        if self._prev_state is None:
-            self._prev_state = (self._get_previous_detailed_coverage_data_state(
-                coverage_type=coverage_type))
-
-        return self._prev_state
-
-    def set_current(self, state):
+    def set_current(self, state, file_type):
         """Sets the state for this cycle in the bucket."""
         state_file_bucket_path = self._get_bucket_cycle_state_file_path(
-            self.cycle)
-        with tempfile.NamedTemporaryFile(mode='w') as temp_file:
-            temp_file.write(json.dumps(state))
-            temp_file.flush()
-            filestore_utils.cp(temp_file.name, state_file_bucket_path)
-
-    def set_current_detailed_coverage(self, state, coverage_type):
-        """Sets the state of detailed coverage in the bucket."""
-        state_file_bucket_path = (
-            self._get_bucket_detailed_coverage_data_state_file_path(
-                coverage_type))
+            self.cycle, file_type=file_type)
         with tempfile.NamedTemporaryFile(mode='w') as temp_file:
             temp_file.write(json.dumps(state))
             temp_file.flush()

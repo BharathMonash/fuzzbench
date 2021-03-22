@@ -47,15 +47,18 @@ class DetailedCoverageData:  # pylint: disable=too-many-instance-attributes
                                                    ignore_index=True)
 
     def add_segment_entry(  # pylint: disable=too-many-arguments
-            self, benchmark, fuzzer, trial_id, file_name, line, column, time):
+            self, benchmark, fuzzer, trial_id, file_name, line, column, time,
+            recoreded_segments):
         """Adds an entry to the segment_df."""
         segment_entry = [
             benchmark, fuzzer, trial_id, time, file_name, line, column
         ]
 
-        insert_series = pd.Series(segment_entry, index=self.segment_df.columns)
-        self.segment_df = self.segment_df.append(insert_series,
-                                                 ignore_index=True)
+        if [line, column] not in recoreded_segments:
+            insert_series = pd.Series(segment_entry,
+                                      index=self.segment_df.columns)
+            self.segment_df = self.segment_df.append(insert_series,
+                                                     ignore_index=True)
 
     def remove_redundant_entries(self):
         """Removes redundant entries in segment_df. Before calling this
@@ -76,12 +79,21 @@ class DetailedCoverageData:  # pylint: disable=too-many-instance-attributes
                 'Error occurred when removing duplicates.')
 
 
-def extract_segments_and_functions_from_summary_json(  # pylint: disable=too-many-locals
-        summary_json_file, benchmark, fuzzer, trial_id, time):
+def extract_segments_and_functions_from_summary_json(
+        # pylint: disable=too-many-arguments
+        summary_json_file,
+        benchmark,
+        fuzzer,
+        trial_id,
+        time,
+        trial_specific_coverage_data):
     """Return a trial-specific data frame container with segment and function
      coverage information given a trial-specific coverage summary json file."""
 
-    trial_specific_coverage_data = DetailedCoverageData()
+    recorded_segments = [[
+        trial_specific_coverage_data.segment_df['line'][i],
+        trial_specific_coverage_data.segment_df['column'][i]
+    ] for i in trial_specific_coverage_data.segment_df.index]
 
     try:
         coverage_info = coverage_utils.get_coverage_infomation(
@@ -103,7 +115,8 @@ def extract_segments_and_functions_from_summary_json(  # pylint: disable=too-man
                         file['filename'],
                         segment[0],  # Segment line.
                         segment[1],  # Segment column.
-                        time)
+                        time,
+                        recorded_segments)
 
     except (ValueError, KeyError, IndexError):
         coverage_utils.logger.error(

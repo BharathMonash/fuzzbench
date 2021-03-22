@@ -534,7 +534,7 @@ class SnapshotMeasurer(coverage_utils.TrialCoverage):  # pylint: disable=too-man
             cycle, 'segment')
 
         # Read previous coverage data (for segments (JSON)) into data frames.
-        self.detailed_coverage_data.segment_df = pd.read_json(
+        self.detailed_coverage_data.segment_df = pd.from_dict(
             measured_segment_coverage_data, orient='table')
 
         # Record and append the new record to the data frame with old records.

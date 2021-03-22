@@ -529,17 +529,14 @@ class SnapshotMeasurer(coverage_utils.TrialCoverage):  # pylint: disable=too-man
         """Saves the measured-detailed-coverage-files StateFile for this cycle
         with the detailed coverage files measured in this cycle and previous
         ones."""
-        # Get coverage data for segments and functions from previous cycles.
+        # Get coverage data for segments from previous cycles. Previous function
+        # coverage data is not needed.
         measured_segment_coverage_data = self.get_prev_measured_files(
             cycle, 'segment')
-        measured_function_coverage_data = self.get_prev_measured_files(
-            cycle, 'function')
 
-        # Read previous coverage data (JSON) into data frames.
+        # Read previous coverage data (for segments (JSON)) into data frames.
         self.detailed_coverage_data.segment_df = pd.read_json(
             measured_segment_coverage_data, orient='table')
-        self.detailed_coverage_data.function_df = pd.read_json(
-            measured_function_coverage_data, orient='table')
 
         # Record and append the new record to the data frame with old records.
         # This way we can avoid having two data frames in memory

@@ -75,7 +75,6 @@ def record_segment_and_function_coverage(  # pylint: disable=too-many-arguments
         extract_segments_and_functions_from_summary_json(
             cov_summary_file, benchmark, fuzzer,
             trial_num, time_stamp, trial_specific_coverage_data)
-    trial_specific_coverage_data.remove_redundant_entries()
 
     return trail_specific_coverage_data
 
@@ -91,27 +90,22 @@ class StateFile:
         self.cycle = cycle
         self._prev_state = None
 
-    def _get_bucket_cycle_state_file_path(self, cycle: int, file_type) -> str:
+    def _get_bucket_cycle_state_file_path(self, cycle: int) -> str:
         """Gets the state file path in the bucket."""
-        if file_type == 'measured_files' or 'segments':
-            state_file_name = experiment_utils.get_cycle_filename(
-                self.name, cycle) + '.json'
-            state_file_path = os.path.join(self.state_dir, state_file_name)
-        else:
-            state_file_name = self.name + '.json'
-            state_file_path = os.path.join(self.state_dir, state_file_name)
+        state_file_name = experiment_utils.get_cycle_filename(self.name,
+                                                              cycle) + '.json'
+        state_file_path = os.path.join(self.state_dir, state_file_name)
 
         return exp_path.filestore(pathlib.Path(state_file_path))
 
-    def _get_previous_cycle_state(self, file_type) -> list:
+    def _get_previous_cycle_state(self) -> list:
         """Returns the state from the previous cycle. Returns [] if |self.cycle|
         is 1."""
         if self.cycle == 1:
             return []
 
         previous_state_file_bucket_path = (
-            self._get_bucket_cycle_state_file_path(self.cycle - 1,
-                                                   file_type=file_type))
+            self._get_bucket_cycle_state_file_path(self.cycle - 1))
 
         result = filestore_utils.cat(previous_state_file_bucket_path,
                                      expect_zero=False)
@@ -120,18 +114,17 @@ class StateFile:
 
         return json.loads(result.output)
 
-    def get_previous(self, file_type):
+    def get_previous(self):
         """Returns the previous state."""
         if self._prev_state is None:
-            self._prev_state = self._get_previous_cycle_state(
-                file_type=file_type)
+            self._prev_state = self._get_previous_cycle_state()
 
         return self._prev_state
 
-    def set_current(self, state, file_type):
+    def set_current(self, state):
         """Sets the state for this cycle in the bucket."""
         state_file_bucket_path = self._get_bucket_cycle_state_file_path(
-            self.cycle, file_type=file_type)
+            self.cycle)
         with tempfile.NamedTemporaryFile(mode='w') as temp_file:
             temp_file.write(json.dumps(state))
             temp_file.flush()

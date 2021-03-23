@@ -60,24 +60,6 @@ class DetailedCoverageData:  # pylint: disable=too-many-instance-attributes
             self.segment_df = self.segment_df.append(insert_series,
                                                      ignore_index=True)
 
-    def remove_redundant_entries(self):
-        """Removes redundant entries in segment_df. Before calling this
-        method, for each time stamp, segment_df contains all segments that are
-        covered in this time stamp. After calling this method, for each time
-        stamp, segment_df only contains segments that have been covered since
-        the previous time stamp. This significantly reduces the size of the
-        resulting CSV file."""
-        try:
-            # Drop duplicates but with different timestamps in segment data.
-            self.segment_df = self.segment_df.sort_values(by=['time'])
-            self.segment_df = self.segment_df.drop_duplicates(
-                subset=self.segment_df.columns.difference(['time']),
-                keep='first')
-
-        except (ValueError, KeyError, IndexError):
-            coverage_utils.logger.error(
-                'Error occurred when removing duplicates.')
-
 
 def extract_segments_and_functions_from_summary_json(
         # pylint: disable=too-many-arguments

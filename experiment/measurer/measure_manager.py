@@ -390,14 +390,6 @@ class SnapshotMeasurer(coverage_utils.TrialCoverage):  # pylint: disable=too-man
                 'Coverage summary json file defective or missing.')
             return 0
 
-    def record_segment_and_function_coverage(self, time_stamp,
-                                             trial_specific_coverage_data):
-        """Measure current segment and function coverage for the cycle."""
-        coverage_data = measure_worker.record_segment_and_function_coverage(
-            self.cov_summary_file, self.benchmark, self.fuzzer, self.trial_num,
-            time_stamp, trial_specific_coverage_data)
-        return coverage_data
-
     def generate_profdata(self, cycle: int):
         """Generate .profdata file from .profraw file."""
         files_to_merge = self.get_profraw_files()
@@ -531,7 +523,7 @@ class SnapshotMeasurer(coverage_utils.TrialCoverage):  # pylint: disable=too-man
         # Get coverage data for segments from previous cycles. Previous function
         # coverage data is not needed.
         measured_segment_coverage_data = self.get_prev_detailed_coverage_data(
-            cycle, 'segment')
+            cycle)
 
         # Read previous coverage data (for segments (JSON)) into data frames.
         self.detailed_coverage_data.segment_df = pd.from_dict(
@@ -556,21 +548,24 @@ class SnapshotMeasurer(coverage_utils.TrialCoverage):  # pylint: disable=too-man
         function_state = self.get_measured_files_state(cycle, 'function')
 
         # Store the data to appropriate state-files.
-        segment_state.set_current(all_segment_data, 'segment')
-        function_state.set_current(all_function_data, 'function')
+        # Prev + current data for segments
+        segment_state.set_current(all_segment_data)
+        # Only current data for functions.
+        function_state.set_current(all_function_data)
 
         # we can get rid of "self.detailed_coverage_data", we don't wanna keep
         # coverage data any longer that it is required.
         self.detailed_coverage_data = None
 
-    def save_measured_files_state(self, cycle, file_type):
+    def save_measured_files_state(self, cycle):
         """Saves the measured-files StateFile for this cycle with files
         measured in this cycle and previous ones."""
         current_corpus_files = set(os.listdir(self.corpus_dir))
         previous_files = self.get_prev_measured_files(cycle)
         all_files = previous_files.union(current_corpus_files)
-        measured_files_state = self.get_measured_files_state(cycle, file_type)
-        measured_files_state.set_current(list(all_files), file_type)
+        measured_files_state = self.get_measured_files_state(
+            cycle, 'measured_file')
+        measured_files_state.set_current(list(all_files))
         return all_files
 
     def get_prev_measured_files(self, cycle) -> Set[str]:
@@ -578,13 +573,15 @@ class SnapshotMeasurer(coverage_utils.TrialCoverage):  # pylint: disable=too-man
         list if this is the first cycle."""
         measured_files_state = self.get_measured_files_state(
             cycle, 'measured_file')
-        return set(measured_files_state.get_previous('measured_file'))
+        return set(measured_files_state.get_previous())
 
-    def get_prev_detailed_coverage_data(self, cycle, file_type):
+    def get_prev_detailed_coverage_data(self, cycle):
         """Returns the detailed coverage data in the previous cycle or an empty
         list if this is the first cycle."""
-        measured_files_state = self.get_measured_files_state(cycle, file_type)
-        return measured_files_state.get_previous(file_type)
+        # We only want previous cycles information for segments and we do not
+        # care for previous cycles information for functions.
+        measured_files_state = self.get_measured_files_state(cycle, 'segment')
+        return measured_files_state.get_previous()
 
     def get_measured_files_state(self, cycle, file_type):
         """Returns the StateFile for measured-files of this cycle."""
@@ -614,7 +611,7 @@ class SnapshotMeasurer(coverage_utils.TrialCoverage):  # pylint: disable=too-man
 
     def save_state(self, cycle, this_time):
         """Save state for |cycle|."""
-        self.save_measured_files_state(cycle, 'measured_file')
+        self.save_measured_files_state(cycle)
         self.save_detailed_coverage_files_state(cycle, this_time)
         # TODO(metzman): Save edges/regions state.
 

@@ -12,21 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Utility DetailedCoverageData class and functions for report generation on
-segment and function coverage for the entire experiment
-(all Fuzzer-benchmark-trial combinations)."""
+segment and function coverage for each cycle of |Fuzzer-Benchmak-Trial|
+combination."""
 
 import pandas as pd
 
 from experiment.measurer import coverage_utils
 
 
-class DetailedCoverageData:  # pylint: disable=too-many-instance-attributes
+class DetailedCoverageData:
     """Maintains segment and function coverage information, and writes this
     information to CSV files."""
 
     def __init__(self):
         """Constructor"""
-        # Set by generate_data_frames_after_adding_all_entries().
         self.segment_df = pd.DataFrame(columns=[
             'benchmark', 'fuzzer', 'trial', 'time', 'file', 'line', 'column'
         ])
@@ -72,6 +71,8 @@ def extract_segments_and_functions_from_summary_json(
     """Return a trial-specific data frame container with segment and function
      coverage information given a trial-specific coverage summary json file."""
 
+    # Store all the observed [line, column] (segments) in a list to help us
+    # determine segment redundant entries while adding entries for this cycle.
     recorded_segments = [[
         trial_specific_coverage_data.segment_df['line'][i],
         trial_specific_coverage_data.segment_df['column'][i]
@@ -98,7 +99,7 @@ def extract_segments_and_functions_from_summary_json(
                         segment[0],  # Segment line.
                         segment[1],  # Segment column.
                         time,
-                        recorded_segments)
+                        recorded_segments)  # Already observed segments.
 
     except (ValueError, KeyError, IndexError):
         coverage_utils.logger.error(
